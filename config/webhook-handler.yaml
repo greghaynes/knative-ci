@@ -1,0 +1,12 @@
+apiVersion: serving.knative.dev/v1alpha1
+kind: Service
+metadata:
+  name: gitwebhook
+  namespace: default
+spec:
+  runLatest:
+    configuration:
+      revisionTemplate:
+        spec:
+          container:
+            image: gitlab.com/greghaynes/knative-ci
