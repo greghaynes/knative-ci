@@ -28,8 +28,11 @@ type Handler struct {
 type RepoConfig struct {
 }
 
-func (h *Handler) getRepoConfig(ctx context.Context, ghcli *ghclient.Client, repoOwner, repoName string) (string, error) {
-	content, _, _, err := ghcli.Repositories.GetContents(ctx, repoOwner, repoName, ".ciless.yaml", nil)
+func (h *Handler) getRepoConfig(ctx context.Context, ghcli *ghclient.Client, repoOwner, repoName, ref string) (string, error) {
+	getopts := ghclient.RepositoryContentGetOptions{
+		Ref: ref,
+	}
+	content, _, _, err := ghcli.Repositories.GetContents(ctx, repoOwner, repoName, ".ciless.yaml", &getopts)
 	if err != nil {
 		return "", err
 	}
@@ -48,7 +51,7 @@ func (h *Handler) createGhClient(ctx context.Context) *ghclient.Client {
 func (h *Handler) HandlePullRequest(ctx context.Context, ghcli *ghclient.Client, pr *ghwebhooks.PullRequestPayload) {
 	log.Print("Handling Pull Request")
 
-	repoConfig, err := h.getRepoConfig(ctx, ghcli, pr.PullRequest.Head.Repo.Owner.Login, pr.PullRequest.Head.Repo.Name)
+	repoConfig, err := h.getRepoConfig(ctx, ghcli, pr.PullRequest.Head.Repo.Owner.Login, pr.PullRequest.Head.Repo.Name, pr.PullRequest.Head.Ref)
 	if err != nil {
 		log.Printf("Error getting repo config: %v", err)
 		return
