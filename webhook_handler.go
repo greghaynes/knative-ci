@@ -9,10 +9,14 @@ import (
 
 	ghclient "github.com/google/go-github/github"
 	buildv1alpha1 "github.com/knative/build/pkg/apis/build/v1alpha1"
+	buildclientset "github.com/knative/build/pkg/client/clientset/versioned"
+	buildv1alpha1client "github.com/knative/build/pkg/client/clientset/versioned/typed/build/v1alpha1"
 	"golang.org/x/oauth2"
 	ghwebhooks "gopkg.in/go-playground/webhooks.v5/github"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
@@ -25,7 +29,8 @@ const (
 
 type Handler struct {
 	// Personal Access Token
-	paToken string
+	paToken              string
+	buildTemplatesClient buildv1alpha1client.BuildTemplateInterface
 }
 
 type RepoConfigStep struct {
@@ -38,7 +43,7 @@ type RepoConfig struct {
 	Steps []RepoConfigStep
 }
 
-func createBuildTemplateSpec(config *RepoConfig) (*buildv1alpha1.BuildTemplateSpec, error) {
+func createBuildTemplate(repoSlug string, config *RepoConfig) (*buildv1alpha1.BuildTemplate, error) {
 	steps := []corev1.Container{}
 	for _, configStep := range config.Steps {
 		newStep := corev1.Container{
@@ -49,22 +54,31 @@ func createBuildTemplateSpec(config *RepoConfig) (*buildv1alpha1.BuildTemplateSp
 		steps = append(steps, newStep)
 	}
 
-	return &buildv1alpha1.BuildTemplateSpec{
-		Parameters: []buildv1alpha1.ParameterSpec{
-			{
-				Name:        "REPO_DIR",
-				Description: "Local directory path to checked out repository",
-			},
-			{
-				Name:        "USER_REPO_SLUG",
-				Description: "<username>/<repository_name>",
-			},
-			{
-				Name:        "COMMIT_REF",
-				Description: "Git REF for the current change",
-			},
+	return &buildv1alpha1.BuildTemplate{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "build.knative.dev/v1alpha1",
+			Kind:       "BuildTemplate",
 		},
-		Steps: steps,
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "knative-ci-buildtemplate-" + repoSlug,
+		},
+		Spec: buildv1alpha1.BuildTemplateSpec{
+			Parameters: []buildv1alpha1.ParameterSpec{
+				{
+					Name:        "REPO_DIR",
+					Description: "Local directory path to checked out repository",
+				},
+				{
+					Name:        "USER_REPO_SLUG",
+					Description: "<username>/<repository_name>",
+				},
+				{
+					Name:        "COMMIT_REF",
+					Description: "Git REF for the current change",
+				},
+			},
+			Steps: steps,
+		},
 	}, nil
 }
 
@@ -97,30 +111,56 @@ func (h *Handler) HandlePullRequest(ctx context.Context, ghcli *ghclient.Client,
 	log.Print("Handling Pull Request")
 
 	var repoConfig RepoConfig
-	err := h.getRepoConfig(ctx, ghcli, pr.PullRequest.Head.Repo.Owner.Login, pr.PullRequest.Head.Repo.Name, pr.PullRequest.Head.Ref, &repoConfig)
+	prHead := &pr.PullRequest.Head
+
+	err := h.getRepoConfig(ctx, ghcli, prHead.Repo.Owner.Login, prHead.Repo.Name, prHead.Ref, &repoConfig)
 	if err != nil {
 		log.Printf("Error getting repo config: %v", err)
 		return
 	}
 
-	bt, err := createBuildTemplateSpec(&repoConfig)
+	bt, err := createBuildTemplate(prHead.Repo.FullName, &repoConfig)
 	if err != nil {
 		log.Printf("Error creating buildtemplate: %v", err)
+		return
+	}
+
+	bt, err = h.buildTemplatesClient.Create(bt)
+	if err != nil {
+		log.Printf("Error applying buildtemplate: %v", err)
 		return
 	}
 
 	log.Printf("Got buildtemplate: %v", bt)
 }
 
+var (
+	kubeconfig = flag.String("kubeconfig", "", "Path to a kubeconfig. Only required if out-of-cluster.")
+	masterURL  = flag.String("master", "", "The address of the Kubernetes API server. Overrides any value in kubeconfig. Only required if out-of-cluster.")
+)
+
 func main() {
 	flag.Parse()
-	log.Print("Started webhook-handler")
+	log.Print("Starting webhook-handler")
+
+	cfg, err := clientcmd.BuildConfigFromFlags(*masterURL, *kubeconfig)
+	if err != nil {
+		log.Printf("Error building kubeconfig: %v", err)
+	}
+
+	buildClient, err := buildclientset.NewForConfig(cfg)
+	if err != nil {
+		log.Printf("Error building Build clientset: %v", err)
+	}
+
+	btCli := buildClient.BuildV1alpha1().BuildTemplates("default")
 
 	personalAccessToken := os.Getenv(personalAccessTokenKey)
 	secretToken := os.Getenv(webhookSecretKey)
 
 	h := &Handler{
-		paToken: personalAccessToken,
+		paToken:              personalAccessToken,
+		buildTemplatesClient: btCli,
 	}
 
 	hook, _ := ghwebhooks.New(ghwebhooks.Options.Secret(secretToken))
@@ -145,5 +185,6 @@ func main() {
 		}
 	})
 
+	log.Print("Started webhook-handler")
 	http.ListenAndServe(":8080", nil)
 }
