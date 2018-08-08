@@ -1,8 +1,10 @@
 apiVersion: serving.knative.dev/v1alpha1
 kind: Service
 metadata:
-  name: gitwebhook
+  name: knative-ci
   namespace: default
+  labels:
+    app: pdxhome
 spec:
   runLatest:
     configuration:
@@ -10,3 +12,14 @@ spec:
         spec:
           container:
             image: gitlab.com/greghaynes/knative-ci
+            env:
+            - name: GITHUB_PERSONAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: githubsecret
+                  key: personalAccessToken
+            - name: WEBHOOK_SECRET
+              valueFrom:
+                  secretKeyRef:
+                    name: githubsecret
+                    key: webhookSecret

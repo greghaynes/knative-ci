@@ -34,7 +34,7 @@
     "context/ctxhttp",
   ]
   pruneopts = "UT"
-  revision = "f4c29de78a2a91c00474a2e689954305c350adf9"
+  revision = "f9ce57c11b242f0f1599cf25c89d8cb02c45295a"
 
 [[projects]]
   branch = "master"
@@ -64,15 +64,12 @@
   version = "v1.1.0"
 
 [[projects]]
-  digest = "1:39f43a9ea4af920abf322d1770c5fbf337286cb174a25827b22e1da72dcfdb5c"
-  name = "gopkg.in/go-playground/webhooks.v3"
-  packages = [
-    ".",
-    "github",
-  ]
+  digest = "1:d208f3917f9cf796f35b31c8cffe479131d451abafeca4e588091d7bd24d3ed2"
+  name = "gopkg.in/go-playground/webhooks.v5"
+  packages = ["github"]
   pruneopts = "UT"
-  revision = "8ffb2ffc32b7af2c7e940944eccba4dcd66c692a"
-  version = "v3.13.0"
+  revision = "206a8b42fd268e38840b874be54de8f0987086cd"
+  version = "v5.0.0"
 
 [solve-meta]
   analyzer-name = "dep"
@@ -80,8 +77,7 @@
   input-imports = [
     "github.com/google/go-github/github",
     "golang.org/x/oauth2",
-    "gopkg.in/go-playground/webhooks.v3",
-    "gopkg.in/go-playground/webhooks.v3/github",
+    "gopkg.in/go-playground/webhooks.v5/github",
   ]
   solver-name = "gps-cdcl"
   solver-version = 1
