@@ -8,8 +8,11 @@ import (
 	"os"
 
 	ghclient "github.com/google/go-github/github"
+	buildv1alpha1 "github.com/knative/build/pkg/apis/build/v1alpha1"
 	"golang.org/x/oauth2"
 	ghwebhooks "gopkg.in/go-playground/webhooks.v5/github"
+	"gopkg.in/yaml.v2"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -25,18 +28,60 @@ type Handler struct {
 	paToken string
 }
 
-type RepoConfig struct {
+type RepoConfigStep struct {
+	Name  string
+	Image string
+	Args  []string
 }
 
-func (h *Handler) getRepoConfig(ctx context.Context, ghcli *ghclient.Client, repoOwner, repoName, ref string) (string, error) {
+type RepoConfig struct {
+	Steps []RepoConfigStep
+}
+
+func createBuildTemplateSpec(config *RepoConfig) (*buildv1alpha1.BuildTemplateSpec, error) {
+	steps := []corev1.Container{}
+	for _, configStep := range config.Steps {
+		newStep := corev1.Container{
+			Name:  configStep.Name,
+			Image: configStep.Image,
+			Args:  configStep.Args,
+		}
+		steps = append(steps, newStep)
+	}
+
+	return &buildv1alpha1.BuildTemplateSpec{
+		Parameters: []buildv1alpha1.ParameterSpec{
+			{
+				Name:        "REPO_DIR",
+				Description: "Local directory path to checked out repository",
+			},
+			{
+				Name:        "USER_REPO_SLUG",
+				Description: "<username>/<repository_name>",
+			},
+			{
+				Name:        "COMMIT_REF",
+				Description: "Git REF for the current change",
+			},
+		},
+		Steps: steps,
+	}, nil
+}
+
+func (h *Handler) getRepoConfig(ctx context.Context, ghcli *ghclient.Client, repoOwner, repoName, ref string, config *RepoConfig) error {
 	getopts := ghclient.RepositoryContentGetOptions{
 		Ref: ref,
 	}
 	content, _, _, err := ghcli.Repositories.GetContents(ctx, repoOwner, repoName, ".ciless.yaml", &getopts)
 	if err != nil {
-		return "", err
+		return err
 	}
-	return content.GetContent()
+	rawConfig, err := content.GetContent()
+	if err != nil {
+		return err
+	}
+
+	return yaml.Unmarshal([]byte(rawConfig), config)
 }
 
 func (h *Handler) createGhClient(ctx context.Context) *ghclient.Client {
@@ -51,12 +96,20 @@ func (h *Handler) createGhClient(ctx context.Context) *ghclient.Client {
 func (h *Handler) HandlePullRequest(ctx context.Context, ghcli *ghclient.Client, pr *ghwebhooks.PullRequestPayload) {
 	log.Print("Handling Pull Request")
 
-	repoConfig, err := h.getRepoConfig(ctx, ghcli, pr.PullRequest.Head.Repo.Owner.Login, pr.PullRequest.Head.Repo.Name, pr.PullRequest.Head.Ref)
+	var repoConfig RepoConfig
+	err := h.getRepoConfig(ctx, ghcli, pr.PullRequest.Head.Repo.Owner.Login, pr.PullRequest.Head.Repo.Name, pr.PullRequest.Head.Ref, &repoConfig)
 	if err != nil {
 		log.Printf("Error getting repo config: %v", err)
 		return
 	}
-	log.Printf("Got config %v", repoConfig)
+
+	bt, err := createBuildTemplateSpec(&repoConfig)
+	if err != nil {
+		log.Printf("Error creating buildtemplate: %v", err)
+		return
+	}
+
+	log.Printf("Got buildtemplate: %v", bt)
 }
 
 func main() {
