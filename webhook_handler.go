@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	ghclient "github.com/google/go-github/github"
 	buildv1alpha1 "github.com/knative/build/pkg/apis/build/v1alpha1"
@@ -43,7 +44,7 @@ type RepoConfig struct {
 	Steps []RepoConfigStep
 }
 
-func createBuildTemplate(repoSlug string, config *RepoConfig) (*buildv1alpha1.BuildTemplate, error) {
+func createBuildTemplate(repoSlug, ref string, config *RepoConfig) (*buildv1alpha1.BuildTemplate, error) {
 	steps := []corev1.Container{}
 	for _, configStep := range config.Steps {
 		newStep := corev1.Container{
@@ -54,13 +55,15 @@ func createBuildTemplate(repoSlug string, config *RepoConfig) (*buildv1alpha1.Bu
 		steps = append(steps, newStep)
 	}
 
+	btName := "knative-ci-" + strings.Replace(repoSlug, "/", "-", 1) + "-ref-" + ref
+
 	return &buildv1alpha1.BuildTemplate{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "build.knative.dev/v1alpha1",
 			Kind:       "BuildTemplate",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "knative-ci-buildtemplate-" + repoSlug,
+			Name: btName,
 		},
 		Spec: buildv1alpha1.BuildTemplateSpec{
 			Parameters: []buildv1alpha1.ParameterSpec{
@@ -119,19 +122,26 @@ func (h *Handler) HandlePullRequest(ctx context.Context, ghcli *ghclient.Client,
 		return
 	}
 
-	bt, err := createBuildTemplate(prHead.Repo.FullName, &repoConfig)
+	bt, err := createBuildTemplate(prHead.Repo.FullName, prHead.Ref, &repoConfig)
 	if err != nil {
 		log.Printf("Error creating buildtemplate: %v", err)
 		return
 	}
 
-	bt, err = h.buildTemplatesClient.Create(bt)
+	existingBt, err := h.buildTemplatesClient.Get(bt.ObjectMeta.Name, metav1.GetOptions{})
 	if err != nil {
-		log.Printf("Error applying buildtemplate: %v", err)
-		return
+		bt, err = h.buildTemplatesClient.Create(bt)
+	} else {
+		bt.ObjectMeta.ResourceVersion = existingBt.ObjectMeta.ResourceVersion
+		bt, err = h.buildTemplatesClient.Update(bt)
+	}
+
+	if err != nil {
+		log.Printf("Error create/updateing buildtemplate: %v", err)
 	}
 
 	log.Printf("Got buildtemplate: %v", bt)
+	log.Print("Doing nothing")
 }
 
 var (

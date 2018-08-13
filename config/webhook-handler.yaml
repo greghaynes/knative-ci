@@ -10,6 +10,7 @@ spec:
     configuration:
       revisionTemplate:
         spec:
+          serviceAccountName: knative-ci
           container:
             image: gitlab.com/greghaynes/knative-ci
             env:
