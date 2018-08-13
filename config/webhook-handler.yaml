@@ -12,7 +12,7 @@ spec:
         spec:
           serviceAccountName: knative-ci
           container:
-            image: gitlab.com/greghaynes/knative-ci
+            image: github.com/greghaynes/knative-ci
             env:
             - name: GITHUB_PERSONAL_TOKEN
               valueFrom:
