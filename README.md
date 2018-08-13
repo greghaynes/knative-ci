@@ -21,6 +21,26 @@ To build and install knative-ci:
 ko apply -f config
 ```
 
+## Helloworld
+
+Define a file ".ciless.yaml" inside your repository with the following content
+
+```yaml
+steps:
+  - name: helloworld
+    image: ubuntu
+    args: ["echo", "hello world!"]
+```
+
+Create a webhook and define a webhook secret for your repository on GitHub.
+
+Edit config/webhook-handler-gh-secret.yaml to use a valid personalAccessToken and the webhookSecret you specified for the webhook.
+
+re-run `ko apply -f config`.
+
+Trigger a build by creating a new PR. You should see a new buildtemplate and build created which
+executed the helloworld build step.
+
 ## Design
 
 Users of knative-ci define a series of "steps" in yaml files. These steps
