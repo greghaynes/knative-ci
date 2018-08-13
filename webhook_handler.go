@@ -32,6 +32,7 @@ type Handler struct {
 	// Personal Access Token
 	paToken              string
 	buildTemplatesClient buildv1alpha1client.BuildTemplateInterface
+	buildsClient         buildv1alpha1client.BuildInterface
 }
 
 type RepoConfigStep struct {
@@ -42,6 +43,10 @@ type RepoConfigStep struct {
 
 type RepoConfig struct {
 	Steps []RepoConfigStep
+}
+
+func getRepoBuildTemplateName(repoSlug, ref string) string {
+	return "knative-ci-" + strings.Replace(repoSlug, "/", "-", 1) + "-ref-" + ref
 }
 
 func createBuildTemplate(repoSlug, ref string, config *RepoConfig) (*buildv1alpha1.BuildTemplate, error) {
@@ -55,7 +60,7 @@ func createBuildTemplate(repoSlug, ref string, config *RepoConfig) (*buildv1alph
 		steps = append(steps, newStep)
 	}
 
-	btName := "knative-ci-" + strings.Replace(repoSlug, "/", "-", 1) + "-ref-" + ref
+	btName := getRepoBuildTemplateName(repoSlug, ref)
 
 	return &buildv1alpha1.BuildTemplate{
 		TypeMeta: metav1.TypeMeta{
@@ -79,8 +84,55 @@ func createBuildTemplate(repoSlug, ref string, config *RepoConfig) (*buildv1alph
 					Name:        "COMMIT_REF",
 					Description: "Git REF for the current change",
 				},
+				{
+					Name:        "COMMIT_SHA",
+					Description: "Git SHA for the current commit",
+				},
 			},
 			Steps: steps,
+		},
+	}, nil
+}
+
+func getRepoBuildName(repoSlug, sha string) string {
+	return "knative-ci-" + strings.Replace(repoSlug, "/", "-", 1) + "-sha-" + sha[0:6]
+}
+
+func createBuild(repoSlug, sha, ref string) (*buildv1alpha1.Build, error) {
+	btName := getRepoBuildTemplateName(repoSlug, ref)
+	buildName := getRepoBuildName(repoSlug, sha)
+
+	return &buildv1alpha1.Build{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "build.knative.dev/v1alpha1",
+			Kind:       "BuildTemplate",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      buildName,
+			Namespace: "default",
+		},
+		Spec: buildv1alpha1.BuildSpec{
+			Template: &buildv1alpha1.TemplateInstantiationSpec{
+				Name: btName,
+				Arguments: []buildv1alpha1.ArgumentSpec{
+					{
+						Name:  "REPO_DIR",
+						Value: "/workspace",
+					},
+					{
+						Name:  "USER_REPO_SLUG",
+						Value: repoSlug,
+					},
+					{
+						Name:  "COMMIT_REF",
+						Value: ref,
+					},
+					{
+						Name:  "COMMIT_SHA",
+						Value: sha,
+					},
+				},
+			},
 		},
 	}, nil
 }
@@ -141,7 +193,17 @@ func (h *Handler) HandlePullRequest(ctx context.Context, ghcli *ghclient.Client,
 	}
 
 	log.Printf("Got buildtemplate: %v", bt)
-	log.Print("Doing nothing")
+
+	buildDef, err := createBuild(prHead.Repo.FullName, prHead.Sha, prHead.Ref)
+	if err != nil {
+		log.Printf("Error creating build: %v", err)
+	}
+	build, err := h.buildsClient.Create(buildDef)
+	if err != nil {
+		log.Printf("Error creating build: %v", err)
+		return
+	}
+	log.Printf("Got build: %v", build)
 }
 
 var (
@@ -164,6 +226,7 @@ func main() {
 	}
 
 	btCli := buildClient.BuildV1alpha1().BuildTemplates("default")
+	buildCli := buildClient.BuildV1alpha1().Builds("default")
 
 	personalAccessToken := os.Getenv(personalAccessTokenKey)
 	secretToken := os.Getenv(webhookSecretKey)
@@ -171,6 +234,7 @@ func main() {
 	h := &Handler{
 		paToken:              personalAccessToken,
 		buildTemplatesClient: btCli,
+		buildsClient:         buildCli,
 	}
 
 	hook, _ := ghwebhooks.New(ghwebhooks.Options.Secret(secretToken))
